@@ -1,0 +1,3 @@
+"","ID","Description","setSize","enrichmentScore","NES","pvalue","p.adjust","qvalue","rank","leading_edge","core_enrichment"
+"R-HSA-9752946","R-HSA-9752946","Expression and translocation of olfactory receptors",377,-0.79112346226461,-1.87890141203473,1.9530230308342e-10,3.17756847116725e-07,3.15567405508474e-07,589,"tags=1%, list=3%, signal=1%","EBF1/LDB1"
+"R-HSA-6806667","R-HSA-6806667","Metabolism of fat-soluble vitamins",48,-0.887355898954088,-1.73100375740128,5.67457130584386e-05,0.0461626375730398,0.0458445629182649,227,"tags=17%, list=1%, signal=17%","APOE/RETSAT/AKR1B10/HSPG2/RBP2/APOC3/APOA4/APOA1"
