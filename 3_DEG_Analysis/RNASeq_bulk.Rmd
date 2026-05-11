@@ -637,18 +637,12 @@ dev.off()
 
 #chunk14
 ```{r}
-############################################################
 # LIMMA-VOOM DIFFERENTIAL EXPRESSION ANALYSIS
 # (Recommended for RNA-seq raw counts)
-############################################################
-
 library(limma)
 library(edgeR)
 
-############################################################
 # LOAD RAW COUNTS + METADATA
-############################################################
-
 metadata <- read.csv(
   "E:/seq_bulk/1_SRR_to_IGV_bash_script/metadata_subset.csv"
 )
@@ -659,18 +653,13 @@ merged <- read.csv(
   row.names = 1
 )
 
-############################################################
-# CLEAN GENE NAMES
-############################################################
 
+# CLEAN GENE NAMES
 rownames(merged) <- make.unique(
   rownames(merged)
 )
 
-############################################################
 # KEEP ONLY PROTEIN CODING GENES
-############################################################
-
 pc_df <- read.delim(
   "E:/seq_bulk/2_gtf_to_protein_coding_genes/pc_gene.txt",
   header = TRUE,
@@ -686,10 +675,8 @@ merged <- merged[
   rownames(merged) %in% protein_coding_genes,
 ]
 
-############################################################
-# REMOVE CONFOUNDED DATASETS
-############################################################
 
+# REMOVE CONFOUNDED DATASETS
 metadata <- metadata[
   !metadata$Batch %in% c(
     "GSE183620",
@@ -697,10 +684,8 @@ metadata <- metadata[
   ),
 ]
 
-############################################################
-# MATCH METADATA WITH COUNTS
-############################################################
 
+# MATCH METADATA WITH COUNTS
 merged <- merged[
   ,
   colnames(merged) %in% metadata$Sample
@@ -717,10 +702,7 @@ all(
   metadata$Sample == colnames(merged)
 )
 
-############################################################
 # DEFINE FACTORS
-############################################################
-
 metadata$Condition <- factor(
   metadata$Condition
 )
@@ -734,54 +716,35 @@ metadata$Batch <- factor(
   metadata$Batch
 )
 
-############################################################
-# CREATE DGEList
-############################################################
 
+# CREATE DGEList
 dge <- DGEList(
   counts = merged
 )
 
-############################################################
 # FILTER LOWLY EXPRESSED GENES
-############################################################
-
 keep <- filterByExpr(
   dge,
   group = metadata$Condition
 )
 
 dge <- dge[keep, , keep.lib.sizes = FALSE]
-
-############################################################
-# NORMALIZATION
-############################################################
-
 dge <- calcNormFactors(dge)
 
-############################################################
 # DESIGN MATRIX
-############################################################
-
 design <- model.matrix(
   ~ Batch + Condition,
   data = metadata
 )
 
-############################################################
 # VOOM TRANSFORMATION
-############################################################
-
 v <- voom(
   dge,
   design,
   plot = TRUE
 )
 
-############################################################
 # LIMMA FITTING
-############################################################
-
 fit <- lmFit(
   v,
   design
@@ -791,10 +754,8 @@ fit <- eBayes(
   fit
 )
 
-############################################################
-# EXTRACT RESULTS
-############################################################
 
+# EXTRACT RESULTS
 top_genes <- topTable(
   fit,
   coef = "ConditionUC_No",
@@ -802,27 +763,20 @@ top_genes <- topTable(
   adjust.method = "fdr"
 )
 
-############################################################
-# SAVE RESULTS
-############################################################
 
+# SAVE RESULTS
 write.csv(
   top_genes,
   "E:/seq_bulk/output/limma_voom/DEGs_limma_voom.csv"
 )
 
-############################################################
-# SIGNIFICANT DEGs
-############################################################
 
+# SIGNIFICANT DEGs
 DEGs <- top_genes[
   top_genes$P.Value < 0.01,
 ]
 
-############################################################
-# SUMMARY
-############################################################
-
+#Summary
 cat(
   "Total significant genes:",
   nrow(DEGs),
