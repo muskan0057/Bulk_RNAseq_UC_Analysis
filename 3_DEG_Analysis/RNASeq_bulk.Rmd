@@ -1,0 +1,845 @@
+---
+title: "Bulk_rna_seq"
+author: "Muskan"
+date: "2026-05-09"
+output: html_document
+---
+#chunk1: fixing directory
+```{r}
+knitr::opts_chunk$set(
+  echo = TRUE
+)
+knitr::opts_knit$set(root.dir = "E:/")
+getwd()
+```
+
+#chunk2a:loading data and metadata and keeping just protein coding genes
+```{r}
+library(tidyverse)
+setwd("E:/seq_bulk/1_SRR_to_IGV_bash_script")
+getwd()
+metadata <- read.csv("metadata_subset.csv")
+merged <- read.csv("ileum_raw_counts.csv", check.names = FALSE, row.names = 1)
+
+metadata
+merged
+
+dim(metadata)
+dim(merged)
+
+# Ensure gene names are clean
+rownames(merged) <- make.unique(rownames(merged))
+############################################################
+# READ PROTEIN CODING GENE FILE
+############################################################
+setwd("E:/seq_bulk/2_gtf_to_protein_coding_genes")
+pc_df <- read.delim(
+  "pc_gene.txt",
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE
+)
+protein_coding_genes <- unique(
+  pc_df$gene_name
+)
+merged <- merged[
+  rownames(merged) %in% protein_coding_genes,
+]
+dim(merged)
+
+intersect(colnames(merged), metadata$Sample)
+metadata <- metadata[metadata$Sample %in% colnames(merged), ]
+metadata <- metadata[match(colnames(merged), metadata$Sample), ]
+all(metadata$Sample == colnames(merged))
+```
+
+#chunk2b: To find percenatge missing_genes_per_samples
+```{r}
+merged[is.na(merged)] <- 0
+merged[!is.finite(as.matrix(merged))] <- 0
+
+sample_missing_pct <- colSums(merged == 0) / nrow(merged)
+missing_df <- data.frame(Sample = colnames(merged),              Missing_Percentage = sample_missing_pct[colnames(merged)])
+write.csv(missing_df, "Percentage_of_missing_genes_per_samples.csv")
+
+png("output/Histogram_percentage_of_missing_values_per_samples.png", width = 10, height = 8, units = 'in', res = 300)
+hist(missing_df$Missing_Percentage, main = "Missing Genes per Sample", xlab = "Fraction Missing")
+dev.off()
+
+dim(merged)
+write.csv(merged, "output/raw_merged.csv")
+```
+
+#chunk3: Batch correction using limma
+```{r}
+# Reorder to match sample order in merged ---
+metadata <- metadata[match(colnames(merged), metadata$Sample), ]
+
+# Sanity check (must be TRUE) ---
+stopifnot(all(metadata$Sample == colnames(merged)))
+
+# Prepare design matrix & batch variable ---
+metadata$Batch <- as.factor(metadata$Batch)
+
+mod <- model.matrix(~ Condition, data = metadata)
+
+library(limma)
+# Perform batch correction ---
+corrected_data_limma_bc <- removeBatchEffect(as.matrix(merged),
+                                             batch = metadata$Batch,
+                                             design = mod)
+```
+
+#chunk4: Drop confounding Batches and then removing batch effect using removebatcheffect function of limma
+```{r}
+print(table(metadata$Batch, metadata$Condition))
+
+exclude <- c("GSE183620", "GSE193677")
+metadata$Batch <- droplevels(metadata$Batch)
+metadata <- metadata[!metadata$Batch %in% exclude, ]
+merged   <- merged[, colnames(merged) %in% metadata$Sample]
+
+metadata <- metadata[match(colnames(merged), metadata$Sample), ]
+metadata$Batch <- as.factor(metadata$Batch)
+
+mod <- model.matrix(~ Condition, data = metadata)
+
+corrected_data_limma_bc <- removeBatchEffect(as.matrix(merged),
+                                             batch = metadata$Batch,
+                                             design = mod)
+write.csv(corrected_data_limma_bc, "output/limma/limma_merged.csv")
+```
+
+#chunk5: PCA plot before and after batch correction using limma.
+```{r}
+library(ggplot2)
+
+# --- PCA Before Batch Correction ---
+#remove genes that shows zero variance across samples.
+merged <- merged[apply(merged, 1, var) > 0, ]
+pca_before <- prcomp(t(merged), scale. = TRUE)
+pca_before_df <- data.frame(pca_before$x, Condition = metadata$Condition, Batch = metadata$Batch)
+var_explained_before <- round(100 * (pca_before$sdev^2 / sum(pca_before$sdev^2)), 2)
+
+# --- PCA After Batch Correction ---
+corrected_data_limma_bc <- corrected_data_limma_bc[apply(corrected_data_limma_bc, 1, var) > 0, ]
+pca_after <- prcomp(t(corrected_data_limma_bc), scale. = TRUE)
+pca_after_df <- data.frame(pca_after$x, Condition = metadata$Condition, Batch = metadata$Batch)
+var_explained_after <- round(100 * (pca_after$sdev^2 / sum(pca_after$sdev^2)), 2)
+
+# --- Plot Function ---
+plot_pca <- function(pca_df, var_exp, title) {
+  ggplot(pca_df, aes(x = PC1, y = PC2, color = Condition)) +
+    geom_point(size = 3, alpha = 0.8) +
+    theme_minimal(base_size = 14) +
+    labs(
+      title = title,
+      x = paste0("PC1 (", var_exp[1], "%)"),
+      y = paste0("PC2 (", var_exp[2], "%)"),
+      color = "Condition"
+    ) +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(face = "bold", hjust = 0.5)
+    )
+}
+
+plot_pcab <- function(pca_df, var_exp, title) {
+  ggplot(pca_df, aes(x = PC1, y = PC2, color = Batch)) +
+    geom_point(size = 3, alpha = 0.8) +
+    theme_minimal(base_size = 14) +
+    labs(
+      title = title,
+      x = paste0("PC1 (", var_exp[1], "%)"),
+      y = paste0("PC2 (", var_exp[2], "%)"),
+      color = "Batch"
+    ) +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(face = "bold", hjust = 0.5)
+    )
+}
+
+p3 <- plot_pca(pca_before_df, var_explained_before, "PCA Global Before - by Condition")
+p4 <- plot_pca(pca_after_df, var_explained_after, "PCA Global Final - by Condition")
+p2 <- plot_pcab(pca_before_df, var_explained_before, "PCA Global Before - by Batch")
+p1 <- plot_pcab(pca_after_df, var_explained_after, "PCA Global Final - by Batch")
+
+ggsave("output/limma/PCA/PCA_before_Condition.png", p3, width = 8, height = 6, dpi = 300)
+ggsave("output/limma/PCA/PCA_after_Condition.png", p4, width = 8, height = 6, dpi = 300)
+ggsave("output/limma/PCA/YESPCA_before_Batch.png", p2, width = 8, height = 6, dpi = 300)
+ggsave("output/Limma/PCA/PCA_after_Batch.png", p1, width = 8, height = 6, dpi = 300)
+```
+
+#chunk6: Use limma i.e batch corrected gene matrix file.
+```{r}
+library(limma)
+library(edgeR)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(ggplot2)
+library(tibble)
+library(readr)
+library(ReactomePA)
+```
+```{r}
+ileum_data <- read.csv("output/limma/limma_merged.csv", row.names = 1)
+ileum_data
+
+dim(ileum_data)
+ileum_data <- ileum_data[,colnames(ileum_data)%in%metadata$Sample]
+```
+
+#chunk7: making matrix, giving condition information
+```{r}
+group <- factor(metadata$Condition)
+design <- model.matrix(~0 + group)
+colnames(design) <- levels(group)
+```
+
+#chunk8: fitting data, improving statistical reliability, and running DEG analysis
+```{r}
+fit <- lmFit(ileum_data, design)
+contrast.matrix <- makeContrasts(DiseaseUntreated_vs_Healthy = UC_No - Healthy, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+#ebayes -improves statistical reliability significantly. 
+top_genes <- topTable(fit2, adjust="fdr", number=Inf)
+top_genes
+write.csv(top_genes, "output/limma/DEGs/DEGsList.csv")
+
+DEGs <- top_genes[top_genes$adj.P.Val < 0.05, ]
+total_DEGs <- nrow(DEGs)
+upregulated <- sum(DEGs$logFC > 0)
+downregulated <- sum(DEGs$logFC < 0)
+cat("At FDR < 0.05 - Total DEGs:", total_DEGs, "; Upregulated:", upregulated, "; Downregulated:", downregulated, "\n")
+```
+
+#chunk9: Just a PCA plot (Assess the variance explained by the principal components and evaluate whether samples from the same biological group cluster separately from other groups. )
+```{r}
+library(factoextra)
+pca_res <- prcomp(t(ileum_data), scale. = F)
+qq <- fviz_pca_ind(pca_res, 
+                  label = "metadata$Batch",              
+                  habillage = metadata$Condition,     
+                  addEllipses = FALSE, 
+                  mean.point = FALSE,
+                  title = "UC vs Healthy",
+                  pointsize = 3                       
+) + 
+  theme_minimal(base_size = 15) +
+     theme(plot.title = element_text(hjust = 0.5, face = "plain", size = 11),
+           axis.title = element_text(face = "plain", size = 10),
+           axis.text = element_text(face = "plain", size = 9),
+           legend.title = element_text(face = "plain", size = 10),
+           legend.text = element_text(face = "plain", size = 9))
+png("output/limma/PCA/contrastPCA.png",width = 7, height = 5, units = 'in', res = 300)
+plot(qq)
+dev.off()
+
+```
+
+#chunk10: To visualise genes that found to be differentely expressed using volcano plot.
+```{r}
+library(ggplot2)
+library(ggrepel)
+
+# Genes to highlight (from paper or of special interest)
+highlightgenes <- c("REG1A", "FDFT1", "SIK1", "DMBT1", "GGACT", "DUSP21")
+
+# Assign legend category
+top_genes$Legend_Category <- "Not significant"
+top_genes$Legend_Category[top_genes$adj.P.Val < 0.05] <- "Significant"
+top_genes$Legend_Category[rownames(top_genes) %in% highlightgenes &
+                         top_genes$adj.P.Val < 0.05] <- "Reported in Papers"
+# Color palette
+legend_colors <- c("Reported in Papers" = "red",
+                   "Significant" = "#1e90ff",
+                   "Not significant" = "grey")
+
+# Label subset
+label_df <- top_genes[rownames(top_genes) %in% highlightgenes &
+                      top_genes$adj.P.Val < 0.05, ]
+
+
+# Reorder so "Highlighted in Paper" come last
+top_genes$Legend_Category <- factor(top_genes$Legend_Category,
+                                    levels = c("Not significant", "Significant", "Reported in Papers"))
+
+# Volcano plot
+a <- ggplot(top_genes, aes(x = logFC, y = -log10(adj.P.Val),color = Legend_Category)) +
+  geom_point(alpha = 0.7, size = 2.5) +
+  scale_color_manual(values = legend_colors) +
+  geom_vline(xintercept = c(0, 0), linetype = "dashed", color = "grey") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  geom_text_repel(data = label_df,
+                  aes(label = rownames(label_df)),
+                  color = "black", size = 2.5,
+                  box.padding = 0.4, point.padding = 0.3,
+                  max.overlaps = 20, show.legend = FALSE) +
+#  scale_x_continuous(limits = c(-3, 5)) +
+  theme_minimal() +
+  labs(title = "UC vs Healthy",
+       x = "log2 Fold Change",
+       y = "-log10 Adjusted P value",
+       color = "Legend") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 11),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 9)
+  )
+
+ggsave(filename = "output/limma/Volcano_plots/VolcanoPlot.png", plot = a, width = 8, height = 6, dpi = 300)
+```
+
+#chunk11: Pathway analysis: Just on a DEG list: No padj, or FC cutoff: GSEA (we used it here)
+# ORA analysis: performed on significant genes (with cut offs) - OLD one - can be used when we have a long list of significant genes.
+```{r}
+# A data frame 'top_genes' with rownames = gene symbols, and a 'logFC' column
+res <- top_genes
+
+# Step 1: Map gene symbols to ENTREZ IDs
+ncbi_list <- clusterProfiler::bitr(
+  rownames(res), 
+  fromType = "SYMBOL", 
+  toType = "ENTREZID", 
+  OrgDb = org.Hs.eg.db
+)
+
+res$names <- rownames(res)
+res_mapped <- res %>%
+  left_join(ncbi_list, by = c("names" = "SYMBOL")) %>%
+  filter(!is.na(ENTREZID)) %>%
+  distinct(ENTREZID, .keep_all = TRUE)  # remove duplicates
+
+# Step 2: Create ranked gene list (logFC)
+ngenes <- res_mapped$logFC
+names(ngenes) <- res_mapped$ENTREZID
+ngenes <- sort(ngenes, decreasing = TRUE)
+library(BiocParallel)
+
+register(
+  SerialParam()
+) #for sequencential processing
+# === Reactome GSEA === #
+enp_gsea <- gsePathway(
+  geneList = ngenes,
+  organism = "human",
+  verbose = FALSE
+)
+
+enp_gsea <- setReadable(enp_gsea, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
+pathways <- enp_gsea@result %>% arrange(p.adjust)
+
+top_pathways <- pathways %>% arrange(desc(abs(NES)))
+
+# Plot Top 20 Reactome Pathways
+top_pathways$Description <- str_wrap(top_pathways$Description, width = 50)
+top_pathways <- top_pathways[1:20, ] %>%
+  mutate(Description = fct_reorder(Description, NES))
+
+p <- ggplot(top_pathways, aes(x = NES, y = Description, color = p.adjust, size = setSize)) +
+  geom_point(alpha = 0.9) +
+  scale_color_gradient(low = "#0072B2", high = "#D55E00", name = "FDR (p.adjust)") +
+  scale_size(range = c(3, 10), name = "Gene Set Size") +
+  labs(
+    title = "Top 20 Reactome Pathways",
+    x = "Normalized Enrichment Score",
+    y = NULL
+    ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.y = element_text(size = 10, color = "black", face = "plain"),
+    axis.text.x = element_text(size = 11),
+    plot.title = element_text(size = 15, face = "plain", hjust = 0.5),
+    plot.subtitle = element_text(size = 13, hjust = 0.5),
+    plot.caption = element_text(size = 10, face = "italic", hjust = 0.5),
+    legend.title = element_text(size = 12, face = "plain"),
+    legend.text = element_text(size = 11)
+  )
+
+ggsave("output/limma/pathways/pathwaysplot.png", plot = p, width = 8, height = 6)
+write.csv(pathways, "output/limma/pathways/pathways.csv")
+```
+
+#chunk12: Now, the same analysis using DESeq2 using raw counts.
+```{r}
+# Preferred in most cases of having rawcounts: Most important to note that
+metadata <- read.csv("E:/seq_bulk/1_SRR_to_IGV_bash_script/metadata_subset.csv")
+merged <- read.csv("E:/seq_bulk/1_SRR_to_IGV_bash_script/ileum_raw_counts.csv", check.names = FALSE, row.names = 1)
+
+dim(metadata)
+dim(merged)
+
+# Ensure gene names are clean
+rownames(merged) <- make.unique(rownames(merged))
+pc_df <- read.delim(
+  "E:/seq_bulk/2_gtf_to_protein_coding_genes/pc_gene.txt",
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE
+)
+protein_coding_genes <- unique(
+  pc_df$gene_name
+)
+merged <- merged[
+  rownames(merged) %in% protein_coding_genes,
+]
+
+dim(metadata)
+dim(merged)
+
+library(DESeq2)
+
+# Remove confounded datasets
+# -----------------------------
+metadata <- metadata[!metadata$Batch %in% c("GSE183620", "GSE193677"),]
+
+# Keep only matching samples in count matrix & Reorder metadata to match count matrix columns
+merged <- merged[, colnames(merged) %in% metadata$Sample]
+metadata <- metadata[match(colnames(merged), metadata$Sample), ]
+all(metadata$Sample == colnames(merged))
+
+# Define condition as factor: Set Healthy as reference group
+metadata$Condition <- factor(metadata$Condition)
+metadata$Condition <- relevel(metadata$Condition, ref = "Healthy")
+
+# Define batch as factor
+metadata$Batch <- factor(metadata$Batch)
+
+# Create DESeq2 dataset
+dds <- DESeqDataSetFromMatrix(
+  countData = round(merged),
+  colData = metadata,
+  design = ~ Batch + Condition
+)
+
+# Remove very low-count genes (harmless cutoff - optional )
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep, ]
+
+# Run DESeq2 differential expression analysis
+dds <- DESeq(dds)
+
+res <- results(dds, contrast = c("Condition", "UC_No", "Healthy"))
+res <- res[order(res$padj), ]
+res
+
+res_df <- as.data.frame(res)
+res_df
+
+write.csv(res_df, "output/DESeq2_output/DESeq2_UC_vs_Healthy_results.csv")
+
+upregulated_genes <- sum(
+  res_df$log2FoldChange > 0 &
+  res_df$padj < 0.05,
+  na.rm = TRUE
+)
+
+downregulated_genes <- sum(
+  res_df$log2FoldChange < 0 &
+  res_df$padj < 0.05,
+  na.rm = TRUE
+)
+
+cat("Upregulated genes:", upregulated_genes, "\n")
+cat("Downregulated genes:", downregulated_genes, "\n")
+```
+#chunk13
+```{r}
+# VOLCANO PLOT_DESeq2
+library(ggplot2)
+library(ggrepel)
+# ADD GENE NAMES
+res_df$gene <- rownames(res_df)
+# DEFINE SIGNIFICANCE
+res_df$Significance <- "Not Significant"
+
+res_df$Significance[
+  res_df$padj < 0.05 &
+  res_df$log2FoldChange > 1
+] <- "Upregulated"
+
+res_df$Significance[
+  res_df$padj < 0.05 &
+  res_df$log2FoldChange < -1
+] <- "Downregulated"
+
+############################################################
+# GENES TO HIGHLIGHT
+############################################################
+
+highlightgenes <- c(
+  "REG1A",
+  "FDFT1",
+  "SIK1",
+  "DMBT1",
+  "GGACT",
+  "DUSP21"
+)
+
+pdf(
+  "output/DESeq2_output/Volcano_UC_vs_Healthy.pdf",
+  width = 8,
+  height = 6
+)
+
+ggplot(
+  res_df,
+  aes(
+    x = log2FoldChange,
+    y = -log10(padj)
+  )
+) +
+
+geom_point(
+  aes(color = Significance),
+  alpha = 0.7,
+  size = 2
+) +
+
+scale_color_manual(
+  values = c(
+    "Upregulated" = "red",
+    "Downregulated" = "blue",
+    "Not Significant" = "grey70"
+  )
+) +
+
+geom_text_repel(
+  data = subset(
+    res_df,
+    gene %in% highlightgenes
+  ),
+  
+  aes(label = gene),
+  
+  size = 4,
+  
+  max.overlaps = Inf
+) +
+
+theme_classic(base_size = 14) +
+
+labs(
+  title = "DESeq2: UC vs Healthy",
+  x = "Log2 Fold Change",
+  y = "-Log10 Adjusted P-value"
+)
+
+dev.off()
+```
+```{r}
+# OVERLAP BETWEEN LIMMA AND DESeq2 DEGs
+library(VennDiagram)
+# LIMMA SIGNIFICANT GENES
+limma_sig <- rownames(
+  top_genes[
+    top_genes$adj.P.Val < 0.05,
+  ]
+)
+
+length(limma_sig)
+# DESeq2 SIGNIFICANT GENES
+deseq_sig <- rownames(
+  res_df[
+    res_df$padj < 0.05,
+  ]
+)
+
+length(deseq_sig)
+
+# OVERLAP
+common_genes <- intersect(
+  limma_sig,
+  deseq_sig
+)
+
+length(common_genes)
+# UNIQUE GENES
+limma_unique <- setdiff(
+  limma_sig,
+  deseq_sig
+)
+
+deseq_unique <- setdiff(
+  deseq_sig,
+  limma_sig
+)
+# PRINT COUNTS
+
+cat(
+  "Limma significant genes:",
+  length(limma_sig),
+  "\n"
+)
+
+cat(
+  "DESeq2 significant genes:",
+  length(deseq_sig),
+  "\n"
+)
+
+cat(
+  "Common significant genes:",
+  length(common_genes),
+  "\n"
+)
+
+# SAVE OVERLAPPING GENES
+write.csv(
+  common_genes,
+  "output/Common_DEGs_limma_DESeq2.csv",
+  row.names = FALSE
+)
+
+# VENN DIAGRAM
+
+
+png(
+  "output/Common_DEGs_limma_DESeq2_Venn.png",
+  width = 6,
+  height = 6,
+  units = "in",
+  res = 300
+)
+
+venn.plot <- venn.diagram(
+  
+  x = list(
+    Limma = limma_sig,
+    DESeq2 = deseq_sig
+  ),
+  
+  filename = NULL,
+  
+  fill = c(
+    "skyblue",
+    "pink"
+  ),
+  
+  alpha = 0.5,
+  
+  cex = 1.5,
+  
+  cat.cex = 1.5,
+  
+  cat.pos = c(-20, 20)
+)
+
+grid::grid.draw(venn.plot)
+
+dev.off()
+```
+
+#chunk14
+```{r}
+############################################################
+# LIMMA-VOOM DIFFERENTIAL EXPRESSION ANALYSIS
+# (Recommended for RNA-seq raw counts)
+############################################################
+
+library(limma)
+library(edgeR)
+
+############################################################
+# LOAD RAW COUNTS + METADATA
+############################################################
+
+metadata <- read.csv(
+  "E:/seq_bulk/1_SRR_to_IGV_bash_script/metadata_subset.csv"
+)
+
+merged <- read.csv(
+  "E:/seq_bulk/1_SRR_to_IGV_bash_script/ileum_raw_counts.csv",
+  check.names = FALSE,
+  row.names = 1
+)
+
+############################################################
+# CLEAN GENE NAMES
+############################################################
+
+rownames(merged) <- make.unique(
+  rownames(merged)
+)
+
+############################################################
+# KEEP ONLY PROTEIN CODING GENES
+############################################################
+
+pc_df <- read.delim(
+  "E:/seq_bulk/2_gtf_to_protein_coding_genes/pc_gene.txt",
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE
+)
+
+protein_coding_genes <- unique(
+  pc_df$gene_name
+)
+
+merged <- merged[
+  rownames(merged) %in% protein_coding_genes,
+]
+
+############################################################
+# REMOVE CONFOUNDED DATASETS
+############################################################
+
+metadata <- metadata[
+  !metadata$Batch %in% c(
+    "GSE183620",
+    "GSE193677"
+  ),
+]
+
+############################################################
+# MATCH METADATA WITH COUNTS
+############################################################
+
+merged <- merged[
+  ,
+  colnames(merged) %in% metadata$Sample
+]
+
+metadata <- metadata[
+  match(
+    colnames(merged),
+    metadata$Sample
+  ),
+]
+
+all(
+  metadata$Sample == colnames(merged)
+)
+
+############################################################
+# DEFINE FACTORS
+############################################################
+
+metadata$Condition <- factor(
+  metadata$Condition
+)
+
+metadata$Condition <- relevel(
+  metadata$Condition,
+  ref = "Healthy"
+)
+
+metadata$Batch <- factor(
+  metadata$Batch
+)
+
+############################################################
+# CREATE DGEList
+############################################################
+
+dge <- DGEList(
+  counts = merged
+)
+
+############################################################
+# FILTER LOWLY EXPRESSED GENES
+############################################################
+
+keep <- filterByExpr(
+  dge,
+  group = metadata$Condition
+)
+
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+
+############################################################
+# NORMALIZATION
+############################################################
+
+dge <- calcNormFactors(dge)
+
+############################################################
+# DESIGN MATRIX
+############################################################
+
+design <- model.matrix(
+  ~ Batch + Condition,
+  data = metadata
+)
+
+############################################################
+# VOOM TRANSFORMATION
+############################################################
+
+v <- voom(
+  dge,
+  design,
+  plot = TRUE
+)
+
+############################################################
+# LIMMA FITTING
+############################################################
+
+fit <- lmFit(
+  v,
+  design
+)
+
+fit <- eBayes(
+  fit
+)
+
+############################################################
+# EXTRACT RESULTS
+############################################################
+
+top_genes <- topTable(
+  fit,
+  coef = "ConditionUC_No",
+  number = Inf,
+  adjust.method = "fdr"
+)
+
+############################################################
+# SAVE RESULTS
+############################################################
+
+write.csv(
+  top_genes,
+  "E:/seq_bulk/output/limma_voom/DEGs_limma_voom.csv"
+)
+
+############################################################
+# SIGNIFICANT DEGs
+############################################################
+
+DEGs <- top_genes[
+  top_genes$P.Value < 0.01,
+]
+
+############################################################
+# SUMMARY
+############################################################
+
+cat(
+  "Total significant genes:",
+  nrow(DEGs),
+  "\n"
+)
+
+cat(
+  "Upregulated:",
+  sum(DEGs$logFC > 0),
+  "\n"
+)
+
+cat(
+  "Downregulated:",
+  sum(DEGs$logFC < 0),
+  "\n"
+)
+```
+
+
