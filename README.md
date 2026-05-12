@@ -1,5 +1,5 @@
 # UC_Transcriptomics_MetaAnalysis (Bulk)
-**Ulcerative Colitis Transcriptomic Meta-Analysis in Human samples- 339 Samples (UC_uninflammatory-276 vs Healthy-63)**
+**Ulcerative Colitis Transcriptomic Meta-Analysis in Human samples- 339 Samples (UC_uninflammatory/UC_No-276 vs Healthy-63)**
 **Overview**
 This study investigates transcriptional changes associated with Ulcerative Colitis (UC) by comparing gene expression profiles from intestinal biopsies of UC patients with those of healthy controls using publicly available bulk RNA-seq and microarray datasets from the GEO database.
 The primary objective is to identify: Differentially expressed genes (DEGs), dysregulated biological pathways, inflammatory signaling signatures, and potential biomarkers associated with UC pathogenesis.The analysis integrates multiple independent datasets to improve the robustness and reproducibility of findings.
