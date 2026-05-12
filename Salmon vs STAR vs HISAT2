@@ -1,0 +1,186 @@
+In RNA-Seq, Salmon, STAR, and HISAT2 are used for different purposes depending on your analysis goal, speed requirements, and downstream applications.
+
+1. Use Salmon → when you mainly want gene/transcript quantification
+
+Best for:
+
+Differential expression analysis
+
+Large datasets
+
+Fast processing
+
+Transcript-level quantification
+
+
+Why:
+
+Uses pseudo-alignment/lightweight mapping
+
+Much faster and requires less storage
+
+Produces transcript abundance directly
+
+Very accurate for expression estimation
+
+
+Typical workflow: FASTQ → Salmon → tximport → DESeq2/edgeR/limma
+
+Use Salmon when:
+
+You do bulk RNA-seq DEG analysis
+
+You do not need BAM alignment files
+
+You do not need variant calling or splice visualization
+
+You want computational efficiency
+
+
+Avoid Salmon if you need:
+
+IGV visualization
+
+Novel splice junction discovery
+
+Mutation/SNV analysis
+
+Fusion detection
+
+
+
+---
+
+2. Use STAR → when you need highly accurate full alignment
+
+Best for:
+
+Splice junction detection
+
+Alternative splicing
+
+Fusion gene analysis
+
+Single-cell RNA-seq
+
+IGV visualization
+
+Downstream BAM-based analyses
+
+
+Why:
+
+Extremely fast full aligner
+
+Very accurate splice-aware mapping
+
+Generates high-quality BAM files
+
+Excellent for complex transcriptomes
+
+
+Typical workflow: FASTQ → STAR → featureCounts/HTSeq → DESeq2
+
+Use STAR when:
+
+You need BAM files
+
+You want to inspect reads in IGV
+
+You study isoforms/splicing
+
+You perform fusion detection
+
+You need maximum alignment sensitivity
+
+
+Limitations:
+
+Requires high RAM (~30–40 GB for human genome indexing)
+
+Larger output files
+
+
+
+---
+
+3. Use HISAT2 → when you want efficient alignment with lower RAM
+
+Best for:
+
+Standard bulk RNA-seq
+
+Systems with limited computational resources
+
+Reference-based alignment
+
+
+Why:
+
+Memory efficient
+
+Splice-aware aligner
+
+Good balance of speed and accuracy
+
+Easier on laptops/workstations
+
+
+Typical workflow: FASTQ → HISAT2 → featureCounts → DESeq2
+
+Use HISAT2 when:
+
+You need BAM files but have limited RAM
+
+You are doing routine DEG analysis
+
+You want reliable genome alignment
+
+You work on standard bulk RNA-seq projects
+
+
+Limitations:
+
+Slightly slower/less sensitive than STAR for complex splicing
+
+Less preferred for advanced isoform analysis
+
+
+
+---
+
+Quick Decision Guide
+
+Goal	Recommended Tool
+
+Fast DEG analysis	Salmon
+Transcript quantification	Salmon
+BAM file generation	STAR / HISAT2
+IGV visualization	STAR / HISAT2
+Alternative splicing	STAR
+Fusion detection	STAR
+Low RAM system	HISAT2
+Large-scale projects	Salmon
+Standard bulk RNA-seq	HISAT2 or Salmon
+Single-cell RNA-seq	STAR
+
+
+
+---
+
+Common Modern Practice
+
+Many current studies prefer:
+
+Salmon + tximport + DESeq2 for fast expression analysis
+
+STAR for alignment-heavy analyses
+
+HISAT2 when computational resources are limited
+
+
+For your kind of bulk RNA-seq DEG workflows with PCA, batch correction, heatmaps, and DESeq2:
+
+Use Salmon if expression analysis is the main goal.
+
+Use STAR/HISAT2 if you also want IGV visualization or read-level inspection.
